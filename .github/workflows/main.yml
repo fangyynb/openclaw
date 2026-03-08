@@ -1,10 +1,10 @@
-name: Build and Package OpenClaw
+name: Export OpenClaw Image
 
 on:
   workflow_dispatch:
     inputs:
       architecture:
-        description: '选择构建架构 (Select Architecture)'
+        description: '选择运行的目标架构 (Select Target Architecture)'
         required: true
         default: 'amd64'
         type: choice
@@ -13,52 +13,37 @@ on:
           - arm64
 
 jobs:
-  build:
+  build-and-export:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # 设置跨平台构建环境
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
-        with:
-          platforms: ${{ github.event.inputs.architecture }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # 第一步：构建镜像
-      # 注意：为了让后续 compose 能够识别，这里先构建到本地 load
+      # 核心步骤：只负责构建镜像
       - name: Build Docker Image
         run: |
-          PLATFORM="linux/${{ github.event.inputs.architecture }}"
           docker buildx build \
-            --platform $PLATFORM \
+            --platform linux/${{ github.event.inputs.architecture }} \
             -t openclaw:local \
             -f Dockerfile \
             --load .
 
-      # 第二步：执行初始化脚本 (Onboard)
-      # 这里使用 docker-compose 运行，确保环境一致性
-      - name: Run Onboard
-        run: docker compose run --rm openclaw-cli onboard
-
-      # 第三步：验证启动 (可选，仅验证网关能否正常拉起)
-      - name: Test Gateway Start
-        run: |
-          docker compose up -d openclaw-gateway
-          sleep 5
-          docker ps
-
-      # 第四步：导出镜像文件为 .tar
-      - name: Export Docker Image
+      # 将镜像保存为 tar 文件
+      - name: Save Image to Tar
         run: |
           docker save openclaw:local -o openclaw_${{ github.event.inputs.architecture }}.tar
 
-      # 第五步：上传到 GitHub Artifacts 供下载
-      - name: Upload Image Artifact
+      # 上传到 GitHub Actions 的 Artifacts 供下载
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: openclaw-image-${{ github.event.inputs.architecture }}
+          name: openclaw-${{ github.event.inputs.architecture }}-image
           path: openclaw_${{ github.event.inputs.architecture }}.tar
-          retention-days: 5
+          retention-days: 1
