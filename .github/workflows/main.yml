@@ -1,0 +1,64 @@
+name: Build and Package OpenClaw
+
+on:
+  workflow_dispatch:
+    inputs:
+      architecture:
+        description: '选择构建架构 (Select Architecture)'
+        required: true
+        default: 'amd64'
+        type: choice
+        options:
+          - amd64
+          - arm64
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: ${{ github.event.inputs.architecture }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 第一步：构建镜像
+      # 注意：为了让后续 compose 能够识别，这里先构建到本地 load
+      - name: Build Docker Image
+        run: |
+          PLATFORM="linux/${{ github.event.inputs.architecture }}"
+          docker buildx build \
+            --platform $PLATFORM \
+            -t openclaw:local \
+            -f Dockerfile \
+            --load .
+
+      # 第二步：执行初始化脚本 (Onboard)
+      # 这里使用 docker-compose 运行，确保环境一致性
+      - name: Run Onboard
+        run: docker compose run --rm openclaw-cli onboard
+
+      # 第三步：验证启动 (可选，仅验证网关能否正常拉起)
+      - name: Test Gateway Start
+        run: |
+          docker compose up -d openclaw-gateway
+          sleep 5
+          docker ps
+
+      # 第四步：导出镜像文件为 .tar
+      - name: Export Docker Image
+        run: |
+          docker save openclaw:local -o openclaw_${{ github.event.inputs.architecture }}.tar
+
+      # 第五步：上传到 GitHub Artifacts 供下载
+      - name: Upload Image Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openclaw-image-${{ github.event.inputs.architecture }}
+          path: openclaw_${{ github.event.inputs.architecture }}.tar
+          retention-days: 5
